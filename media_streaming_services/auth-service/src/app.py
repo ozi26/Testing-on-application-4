@@ -4,8 +4,10 @@ from pathlib import Path  # Import path handling for centralized configuration.
 import json  # Import JSON support.
 import sys  # Import Python path support.
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))  # Add the central config directory to the module path.
-import auth_config  # Import the language-specific configuration.
+# Add the central config directory to the module path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))  
+# Import the language-specific configuration.
+import auth_config  
 
 USERS = {"demo@example.com": {"password": "demo123", "userId": "u1"}}  # Define the demonstration users.
 
