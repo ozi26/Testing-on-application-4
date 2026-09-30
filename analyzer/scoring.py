@@ -59,13 +59,17 @@ def calculate_score(changed_terms, test_file_path):
     # Return the calculated score
     return min(base_score + bonus, 1.0)
 
-
 def compute_service_relevance(test_file, affected_services):
     """
     Compute a service-relevance score between 0.0 and 1.0.
 
-    Matches against BOTH the filename AND the full path so that tests
-    inside '<service>-service/tests/' are correctly recognized.
+    Priority:
+      1.0 — full service name in filename
+      0.9 — "<service>-service" or "<service>_service" in full path
+      0.7 — root word (>= 5 chars) in filename
+      0.5 — service name in a directory segment of the path
+      0.3 — full service name in file content (weak signal)
+      0.0 — no match
     """
     from pathlib import Path
     from analyzer.file_utils import read_text_file
@@ -73,6 +77,7 @@ def compute_service_relevance(test_file, affected_services):
     test_path = Path(test_file)
     filename = test_path.stem.lower()
     full_path = str(test_file).lower().replace("\\", "/")
+    path_parts = [p for p in full_path.split("/") if p]
 
     try:
         content = read_text_file(test_file).lower()
@@ -85,39 +90,32 @@ def compute_service_relevance(test_file, affected_services):
         service_lower = service.lower()
         root = service_lower.replace("service", "").strip("-_")
 
-        # --- Filename match (strongest) ---
+        # --- Filename full match (strongest) ---
         if service_lower in filename:
             best_score = max(best_score, 1.0)
             continue
-        if len(root) >= 4 and root in filename:
-            best_score = max(best_score, 0.7)
-            continue
 
-        # --- FULL PATH match (needed for monorepos) ---
-        # Matches: ".../streaming-service/tests/test_unit.js"
+        # --- Path: "<service>-service" or "<service>_service" ---
         if f"{service_lower}-service" in full_path:
             best_score = max(best_score, 0.9)
             continue
         if f"{service_lower}_service" in full_path:
             best_score = max(best_score, 0.9)
             continue
-        # Match directory segment equal to the service name
-        parts = full_path.split("/")
-        if service_lower in parts:
-            best_score = max(best_score, 0.8)
-            continue
-        if root and len(root) >= 4 and f"{root}-service" in full_path:
+
+        # --- Filename root-word match (require >= 5 chars to avoid noise) ---
+        if len(root) >= 5 and root in filename:
             best_score = max(best_score, 0.7)
             continue
-        if root and len(root) >= 4 and root in parts:
-            best_score = max(best_score, 0.6)
+
+        # --- Directory segment exact match ---
+        if service_lower in path_parts:
+            best_score = max(best_score, 0.5)
             continue
 
-        # --- Content match (weakest) ---
+        # --- Content match (weak signal, only full service name) ---
+        # Do NOT match root words in content — too noisy.
         if service_lower in content:
-            best_score = max(best_score, 0.4)
-            continue
-        if len(root) >= 5 and root in content:
             best_score = max(best_score, 0.3)
             continue
 
