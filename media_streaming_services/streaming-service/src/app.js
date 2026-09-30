@@ -15,11 +15,9 @@ function sendJson(res, status, body) { // Send a JSON response.
   res.end(JSON.stringify(body)); // Serialize and finish the response.
 } // End sendJson.
 
-
 function readBody(req) { // Read a JSON request body.
   return new Promise((resolve, reject) => { let data = ''; req.on('data', (chunk) => data += chunk); req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch (error) { reject(error); } }); req.on('error', reject); }); // Collect and parse the body.
 } // End readBody.
-
 
 function createServer() { // Create the streaming HTTP server.
   return http.createServer(async (req, res) => { // Create an asynchronous request handler.
@@ -29,7 +27,6 @@ function createServer() { // Create the streaming HTTP server.
     return sendJson(res, 404, { error: 'Route not found' }); // Reject unknown routes.
   }); // Finish server creation.
 } // End createServer.
-
 
 if (require.main === module) createServer().listen(config.port, () => console.log(`${config.serviceName} listening on ${config.port}`)); // Start the service when executed directly.
 module.exports = { createServer, createPlaybackSession }; // Export functions for tests.
