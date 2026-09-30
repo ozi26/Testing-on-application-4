@@ -10,14 +10,17 @@ function createPlaybackSession(userId, mediaId) { // Build a playback session fo
   return { sessionId: `${userId}-${mediaId}-${Date.now()}`, userId, mediaId, playbackUrl: `http://localhost:8102/media/${mediaId}/manifest.m3u8` }; // Return session metadata.
 } // End createPlaybackSession.
 
+
 function sendJson(res, status, body) { // Send a JSON response.
   res.writeHead(status, { 'Content-Type': 'application/json' }); // Set response headers.
   res.end(JSON.stringify(body)); // Serialize and finish the response.
 } // End sendJson.
 
+
 function readBody(req) { // Read a JSON request body.
   return new Promise((resolve, reject) => { let data = ''; req.on('data', (chunk) => data += chunk); req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch (error) { reject(error); } }); req.on('error', reject); }); // Collect and parse the body.
 } // End readBody.
+
 
 function createServer() { // Create the streaming HTTP server.
   return http.createServer(async (req, res) => { // Create an asynchronous request handler.
