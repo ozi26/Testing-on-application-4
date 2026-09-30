@@ -5,8 +5,11 @@
 # the configuration parser.
 # =============================================================================
 
+from ast import pattern
 import re                           # 're' is Python's regular expression library
-from pathlib import Path            # 'Path' helps us work with file paths easily
+from pathlib import Path
+
+from matplotlib import text            # 'Path' helps us work with file paths easily
 
 
 def read_text_file(file_path):
@@ -112,20 +115,60 @@ STOP_WORDS = {
     "database", "db", "cache", "redis", "queue", "topic", "channel",
     "log", "logger", "level", "debug", "info", "warn", "error",
     "max", "min", "limit", "threshold", "size", "count", "interval",
+
+    # --- Common dotted-access parts (after splitting) ---
+    "console", "log", "logger", "logging",
+    "json", "parse", "stringify", "serialize", "deserialize",
+    "config", "configuration", "settings", "option", "options",
+    "env", "environment", "process", "argv",
+    "body", "header", "headers", "cookie", "cookies",
+    "message", "msg", "error", "errors", "exception",
+    "create", "createserver", "server", "listen", "listening",
+    "port", "host", "localhost", "url", "uri", "path",
+    "date", "now", "time", "timestamp",
+    "parseint", "parsefloat", "tostring", "toint",
+    "async", "await", "callback", "resolve", "reject",
+    "map", "filter", "reduce", "find", "foreach", "slice",
+    "push", "pop", "shift", "unshift", "splice", "concat",
+    "length", "size", "count", "index", "key", "keys", "values",
+    "userid", "mediaid", "sessionid", "requestid", "traceid",
+    "health", "status", "state", "ready", "healthy",
+    "start", "stop", "init", "setup", "teardown",
 }
 
 
 def extract_words(text):
     """
     Extract meaningful words from text, excluding universal stop-words.
+    Splits dotted identifiers into individual parts.
     """
     import re
-    pattern = r"[A-Za-z_][A-Za-z0-9_.]*"
-    words = re.findall(pattern, text)
-    return set(
-        w.lower() for w in words
-        if w.lower() not in STOP_WORDS and len(w) > 2
-    )
+    # Insert underscore before each capital letter (except first), then lowercase
+    # "createPlaybackSession" → "create_Playback_Session" → split on _
+    
+    text_with_splits = re.sub(r"([a-z])([A-Z])", r"\1_\2", text)
+    pattern = r"[A-Za-z_][A-Za-z0-9_]*"
+    words = re.findall(pattern, text_with_splits)
+
+    result = set()
+    for word in words:
+        wl = word.lower()
+
+        # Skip universal stop-words
+        if wl in STOP_WORDS:
+            continue
+
+        # Skip very short words
+        if len(wl) <= 2:
+            continue
+
+        # Skip pure numbers
+        if wl.isdigit():
+            continue
+
+        result.add(wl)
+
+    return result
 
 def get_file_extension(file_path):
     """
