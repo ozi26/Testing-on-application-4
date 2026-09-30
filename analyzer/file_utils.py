@@ -49,123 +49,119 @@ def read_text_file(file_path):
 # virtually every file regardless of domain.
 
 STOP_WORDS = {
-    # --- Language keywords (JS, Python, Java, C#, Go, etc.) ---
-    "if", "else", "elif", "for", "while", "do", "switch", "case", "break",
-    "continue", "return", "yield", "try", "catch", "except", "finally",
-    "throw", "throws", "raise", "class", "interface", "struct", "enum",
-    "public", "private", "protected", "static", "final", "const", "let",
-    "var", "function", "func", "def", "method", "new", "this", "self",
-    "super", "extends", "implements", "import", "from", "require",
-    "export", "module", "package", "namespace", "using", "include",
-    "async", "await", "promise", "callback", "resolve", "reject",
-    "lambda", "global", "nonlocal", "pass", "assert", "with", "as",
-    "go", "defer", "chan", "select", "context", "fmt",
-    "using", "task", "get", "set", "init", "main", "funcs",
 
-    # --- Type names ---
-    "int", "integer", "float", "double", "string", "str", "bool", "boolean",
-    "char", "byte", "long", "short", "unsigned", "signed", "void", "null",
-    "nil", "none", "true", "false", "undefined", "nan", "inf", "any", "object",
+    # ---- Language keywords (universal) ----
+    "if", "else", "elif", "for", "while", "do", "switch", "case",
+    "break", "continue", "return", "yield", "try", "catch",
+    "except", "finally", "throw", "throws", "raise", "class",
+    "interface", "struct", "enum", "public", "private", "protected",
+    "static", "final", "const", "let", "var", "function", "func",
+    "def", "method", "new", "this", "self", "super", "extends",
+    "implements", "import", "from", "require", "export", "module",
+    "package", "namespace", "using", "include", "async", "await",
+    "promise", "callback", "resolve", "reject", "lambda", "global",
+    "nonlocal", "pass", "assert", "with", "as", "go", "defer",
+    "chan", "select", "context", "fmt", "task", "get", "set",
+    "init", "main",
 
-    # --- Common variable names ---
-    "err", "error", "errors", "msg", "message", "value", "val", "result",
-    "res", "req", "request", "response", "data", "item", "items",
-    "obj", "object", "array", "list", "dict", "map", "set", "key",
-    "name", "type", "kind", "id", "index", "count", "length", "size",
-    "args", "kwargs", "params", "options", "config", "settings",
-    "input", "output", "source", "target", "dest", "base", "root",
-    "file", "path", "url", "uri", "http", "https", "host", "port",
-    "user", "users", "admin", "session", "token", "auth", "login",
-    "create", "read", "update", "delete", "list", "find", "search",
-    "add", "remove", "push", "pop", "save", "load", "fetch", "send",
+    # ---- Type names ----
+    "int", "integer", "float", "double", "string", "str", "bool",
+    "boolean", "char", "byte", "long", "short", "unsigned", "signed",
+    "void", "null", "nil", "none", "true", "false", "undefined",
+    "nan", "inf", "any", "object", "var", "variable",
 
-    # --- API/HTTP verbs (shared across all languages) ---
-    "get", "post", "put", "patch", "delete", "head", "options",
+    # ---- Common variable names ----
+    "err", "error", "errors", "msg", "message", "value", "val",
+    "result", "res", "req", "request", "response", "data", "item",
+    "items", "obj", "array", "list", "dict", "map", "set", "key",
+    "name", "type", "kind", "id", "index", "count", "length",
+    "size", "args", "kwargs", "params", "options", "config",
+    "settings", "setting", "input", "output", "source", "target",
+    "dest", "base", "root", "file", "path", "url", "uri", "http",
+    "https", "host", "port", "user", "users", "admin", "session",
+    "token", "auth", "login", "create", "read", "update", "delete",
+    "list", "find", "search", "add", "remove", "push", "pop",
+    "save", "load", "fetch", "send", "sent",
+
+    # ---- Common English words (from comments/strings) ----
+    "the", "a", "an", "and", "or", "not", "is", "are", "was",
+    "were", "this", "that", "these", "those", "with", "without",
+    "for", "of", "to", "in", "on", "at", "by", "as", "if", "then",
+    "when", "where", "will", "should", "would", "could", "have",
+    "has", "had", "all", "any", "some", "each", "every", "only",
+    "also", "just", "can", "cannot", "but", "or", "so", "than",
+    "too", "very", "much", "many", "more", "less", "most", "least",
+    "which", "who", "what", "how", "why", "where", "when", "while",
+    "here", "there", "now", "then", "still", "already", "yet",
+    "always", "never", "often", "sometimes", "usually", "once",
+    "twice", "again", "back", "forward", "up", "down", "over",
+    "under", "above", "below", "before", "after", "during", "between",
+    "into", "out", "off", "on", "through", "around", "about",
+    "against", "along", "across", "behind", "beside", "beyond",
+
+    # ---- Common verb forms ----
+    "is", "are", "was", "were", "be", "been", "being", "have",
+    "has", "had", "do", "does", "did", "will", "would", "shall",
+    "should", "can", "could", "may", "might", "must", "ought",
+    "need", "dare", "used", "get", "got", "getting", "make",
+    "made", "making", "take", "took", "taken", "taking", "come",
+    "came", "coming", "see", "saw", "seen", "seeing", "know",
+    "knew", "known", "knowing", "think", "thought", "thinking",
+    "want", "wanted", "wanting", "use", "used", "using", "find",
+    "found", "finding", "give", "gave", "given", "giving",
+    "tell", "told", "telling", "work", "worked", "working",
+    "call", "called", "calling", "try", "tried", "trying",
+    "ask", "asked", "asking", "feel", "felt", "feeling",
+    "seem", "seemed", "seeming", "leave", "left", "leaving",
+    "look", "looked", "looking", "show", "showed", "showing",
+
+    # ---- API / HTTP vocabulary (shared across all languages) ----
     "route", "router", "endpoint", "api", "rest", "graphql",
-    "json", "jsonify", "parse", "stringify", "serialize", "deserialize",
-    "body", "header", "headers", "param", "params", "query", "payload",
-    "status", "code", "statuscode", "content", "mime", "cookie",
-    "middleware", "handler", "controller", "service", "client", "server",
-    "app", "server", "express", "flask", "fastapi", "django", "spring",
-    "httpstatus", "responseentity", "requestentity",
+    "json", "jsonify", "parse", "stringify", "serialize",
+    "deserialize", "body", "header", "headers", "param", "params",
+    "query", "payload", "status", "code", "statuscode", "content",
+    "mime", "cookie", "middleware", "handler", "controller",
+    "service", "client", "server", "app", "express", "flask",
+    "fastapi", "django", "spring", "httpstatus", "responseentity",
+    "requestentity", "catalog", "streaming", "auth", "notification",
+    "recommendation", "subscription", "history", "watchlist",
 
-    # --- Test framework keywords ---
-    "describe", "test", "it", "expect", "assert", "should", "before",
-    "after", "beforeeach", "aftereach", "jest", "mocha", "jasmine",
-    "pytest", "unittest", "setup", "teardown", "fixture", "mock",
-    "stub", "spy", "patch", "monkeypatch",
+    # ---- Test framework keywords ----
+    "describe", "test", "tests", "it", "expect", "assert", "should",
+    "before", "after", "beforeeach", "aftereach", "jest", "mocha",
+    "jasmine", "pytest", "unittest", "setup", "teardown", "fixture",
+    "mock", "stub", "spy", "patch", "monkeypatch", "unit",
+    "integration", "spec", "specs", "check", "verify", "validate",
+    "success", "failure", "pass", "fail", "given", "when", "then",
+    "arrange", "act", "assert",
 
-    # --- Common English (from comments/strings) ---
-    "the", "a", "an", "and", "or", "not", "is", "are", "was", "were",
-    "this", "that", "these", "those", "with", "without", "for", "of",
-    "to", "in", "on", "at", "by", "as", "if", "then", "when", "where",
-    "will", "should", "would", "could", "have", "has", "had",
-    "all", "any", "some", "each", "every", "only", "also", "just",
-
-    # --- Common test-path words ---
-    "test", "tests", "unit", "integration", "spec", "specs", "check",
-    "verify", "validate", "success", "failure", "pass", "fail",
-    "given", "when", "then", "arrange", "act", "assert",
-
-    # --- Common config/JSON keys ---
+    # ---- Common file/config vocabulary ----
     "config", "configuration", "settings", "option", "options",
     "default", "enabled", "disabled", "timeout", "retry", "attempts",
-    "host", "port", "url", "protocol", "scheme", "path", "endpoint",
-    "version", "env", "environment", "dev", "test", "prod", "staging",
-    "database", "db", "cache", "redis", "queue", "topic", "channel",
-    "log", "logger", "level", "debug", "info", "warn", "error",
-    "max", "min", "limit", "threshold", "size", "count", "interval",
-
-    # --- Common dotted-access parts (after splitting) ---
-    "console", "log", "logger", "logging",
-    "json", "parse", "stringify", "serialize", "deserialize",
-    "config", "configuration", "settings", "option", "options",
-    "env", "environment", "process", "argv",
-    "body", "header", "headers", "cookie", "cookies",
-    "message", "msg", "error", "errors", "exception",
-    "create", "createserver", "server", "listen", "listening",
-    "port", "host", "localhost", "url", "uri", "path",
-    "date", "now", "time", "timestamp",
-    "parseint", "parsefloat", "tostring", "toint",
-    "async", "await", "callback", "resolve", "reject",
-    "map", "filter", "reduce", "find", "foreach", "slice",
-    "push", "pop", "shift", "unshift", "splice", "concat",
-    "length", "size", "count", "index", "key", "keys", "values",
-    "userid", "mediaid", "sessionid", "requestid", "traceid",
-    "health", "status", "state", "ready", "healthy",
-    "start", "stop", "init", "setup", "teardown",
+    "protocol", "scheme", "version", "env", "environment", "dev",
+    "prod", "staging", "database", "db", "cache", "redis", "queue",
+    "topic", "channel", "log", "logger", "logging", "level",
+    "debug", "info", "warn", "error", "max", "min", "limit",
+    "threshold", "size", "count", "interval", "unknown", "standard",
+    "net", "support", "declare", "define", "overridden", "preference",
 }
 
 
 def extract_words(text):
-    """
-    Extract meaningful words from text, excluding universal stop-words.
-    Splits dotted identifiers into individual parts.
-    """
+    """Extract meaningful words, excluding stop-words."""
     import re
-    # Insert underscore before each capital letter (except first), then lowercase
-    # "createPlaybackSession" → "create_Playback_Session" → split on _
-    
-    text_with_splits = re.sub(r"([a-z])([A-Z])", r"\1_\2", text)
     pattern = r"[A-Za-z_][A-Za-z0-9_]*"
-    words = re.findall(pattern, text_with_splits)
+    words = re.findall(pattern, text)
 
     result = set()
     for word in words:
         wl = word.lower()
-
-        # Skip universal stop-words
         if wl in STOP_WORDS:
             continue
-
-        # Skip very short words
         if len(wl) <= 2:
             continue
-
-        # Skip pure numbers
         if wl.isdigit():
             continue
-
         result.add(wl)
 
     return result

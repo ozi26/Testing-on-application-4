@@ -3,35 +3,50 @@
 # =============================================================================
 # Main entry point for the analyzer. Detects changes in source code and
 # configuration files, selects the minimal subset of tests that must run,
-# and outputs results as analyzer_result.json for the Jenkins pipeline.
+# and outputs analyzer_result.json for the Jenkins pipeline.
+#
+# Universal — works on any project in any language without modification.
 # =============================================================================
 
 import sys
 import re
 import json
+import math
 import subprocess
-import tempfile
 import argparse
 from pathlib import Path
 
+# -----------------------------------------------------------------------------
 # Make the project root importable
+# -----------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
+# -----------------------------------------------------------------------------
+# Analyzer module imports (all at module level, column 0)
+# -----------------------------------------------------------------------------
 from analyzer.git_changes import get_changed_files, categorize_changed_files
 from analyzer.code_parser import extract_code_terms
 from analyzer.config_parser import parse_config_file
-from analyzer.scoring import calculate_score, compute_service_relevance
-from analyzer.file_utils import get_file_extension, is_test_file
+from analyzer.scoring import (
+    calculate_score,
+    compute_service_relevance,
+    calculate_corpus_idf,
+)
+from analyzer.file_utils import (
+    get_file_extension,
+    is_test_file,
+    extract_words,
+)
 from analyzer.config import SOURCE_EXTENSIONS
 
 
 # =============================================================================
 # MODULE-LEVEL HELPERS
 # =============================================================================
-# These MUST be at column 0 (no indentation) so they can be imported and
-# called from anywhere in the pipeline. Do not nest them inside other
-# functions — that breaks the analyzer's import graph.
+# All functions below must be at column 0 (no indentation). Do NOT nest
+# them inside other functions — that breaks imports and scope resolution.
 # =============================================================================
 
 
@@ -50,7 +65,6 @@ def extract_service_name(file_path):
     Examples:
         media_streaming_services/auth-service/src/app.py           -> "auth"
         media_streaming_services/notification-service/Service.cs   -> "notification"
-        media_streaming_services/catalog-service/src/app.js        -> "catalog"
         rideshare_services/config/driver_config.py                 -> "driver"
         rideshare_services/driver_service.py                       -> "driver"
         tests/test_driver_service.py                               -> "driver"
@@ -60,8 +74,7 @@ def extract_service_name(file_path):
     path = Path(file_path)
 
     # ---- Priority 1: parent dir named "<service>-service" or "<service>_service" ----
-    # This handles monorepos: auth-service/src/app.py -> "auth"
-    for part in reversed(path.parts[:-1]):        # walk up, closest first
+    for part in reversed(path.parts[:-1]):
         part_lower = part.lower()
         for suffix in ("-service", "_service"):
             if part_lower.endswith(suffix):
@@ -76,7 +89,7 @@ def extract_service_name(file_path):
             name = name[len(prefix):]
             break
 
-    # Strip known trailing suffixes
+    # Strip known trailing suffixes (longest first)
     SUFFIXES = [
         "_service_test", "_service_tests", "_service_spec",
         ".service.test", ".service.spec", ".service",
@@ -101,42 +114,41 @@ def extract_service_name(file_path):
 
     name = name.strip("._-")
 
-    # ---- Priority 3: if name is empty or a generic token, use parent dir ----
-    GENERIC_NAMES = {"app", "main", "index", "server", "service",
-                     "handler", "controller", "model", "view", "__init__"}
+    # ---- Priority 3: if name is empty or generic, use parent dir ----
+    GENERIC_NAMES = {
+        "app", "main", "index", "server", "service", "handler",
+        "controller", "model", "view", "__init__",
+    }
     if not name or name in GENERIC_NAMES:
-        # Use the nearest parent directory that isn't generic
         for part in reversed(path.parts[:-1]):
             part_lower = part.lower()
             if part_lower in ("src", "test", "tests", "lib", "app",
                               "main", "java", "python", "js"):
                 continue
-            # Clean the parent name too
             for suffix in ("-service", "_service", "-api", "_api"):
                 if part_lower.endswith(suffix):
                     return part_lower[: -len(suffix)]
             return part_lower
-        # Absolute fallback
         return name or path.stem.lower()
 
     return name
+
 
 def extract_services_from_config(config_file):
     """
     Extract service names from a config file's CONTENTS.
 
-    Looks for:
-      - `metadata.name` fields (Kubernetes manifests)
-      - `env[].value` hostnames like "paymentservice:50051"
-
-    Returns a set of service names (possibly empty).
+    Looks for `metadata.name` fields and env hostnames in YAML files
+    (Kubernetes manifests). Returns an empty set for other formats.
     """
-    import yaml  # imported here to keep the module importable even if PyYAML is missing
+    try:
+        import yaml
+    except ImportError:
+        return set()
 
     services = set()
     suffix = Path(config_file).suffix.lower()
 
-    # Only parse YAML files deeply for now
     if suffix not in (".yaml", ".yml"):
         return services
 
@@ -150,14 +162,12 @@ def extract_services_from_config(config_file):
         if not isinstance(doc, dict):
             continue
 
-        # --- metadata.name ---
         metadata = doc.get("metadata", {})
         if isinstance(metadata, dict):
             name = metadata.get("name")
             if isinstance(name, str) and name:
                 services.add(name)
 
-        # --- env[].value hostnames ---
         spec = doc.get("spec", {})
         if isinstance(spec, dict):
             template = spec.get("template", {})
@@ -183,11 +193,10 @@ def extract_services_from_config(config_file):
 
     return services
 
-
 def find_test_files(test_dir):
     """
     Find all test files in a directory, across any programming language.
-    Uses language-agnostic pattern matching from analyzer.file_utils.
+    Recursively walks the entire tree so tests at any depth are found.
     """
     test_path = Path(test_dir)
     if not test_path.exists():
@@ -197,13 +206,12 @@ def find_test_files(test_dir):
     SKIP_DIRS = {
         "node_modules", "venv", ".git", "__pycache__",
         "dist", "build", "coverage", ".pytest_cache",
+        "target", "bin", "obj", "images", ".idea", ".vscode",
     }
 
     for file_path in test_path.rglob("*"):
         if not file_path.is_file():
             continue
-
-        # Skip common non-source directories
         if any(p in file_path.parts for p in SKIP_DIRS):
             continue
 
@@ -212,7 +220,7 @@ def find_test_files(test_dir):
         if ext not in SOURCE_EXTENSIONS:
             continue
 
-        # Apply the language-agnostic test detector
+        # Language-agnostic test detector
         if is_test_file(str(file_path)):
             test_files.append(str(file_path))
 
@@ -275,17 +283,14 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
     # -------------------------------------------------------------------------
     print("\n[Step 3] Extracting terms from changed files...")
 
-    # Source code terms
     code_terms = extract_code_terms(source_files)
     print(f"Extracted {len(code_terms)} terms from source code files")
 
-    # Config file terms — parse each config file for its key names
     config_terms = set()
     for config_file in config_files:
         try:
             parsed = parse_config_file(config_file)
             for key in parsed.keys():
-                from analyzer.file_utils import extract_words
                 config_terms.update(extract_words(str(key)))
         except Exception as e:
             print(f"  [WARN] Could not parse {config_file}: {e}")
@@ -310,20 +315,18 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
         print(f"  - {f}")
 
     # -------------------------------------------------------------------------
-    # Step 4.5a: Extract affected service names from changed files
+    # Step 4.5a: Extract affected service names
     # -------------------------------------------------------------------------
     affected_services = set()
 
-    # --- From source code file paths ---
+    # From source code file paths
     for f in source_files:
         service = extract_service_name(f)
         if service:
             affected_services.add(service)
 
-    # --- From config file contents (targeted, diff-based) ---
+    # From config file contents via git diff
     for f in config_files:
-        # Normalize path for Git (windows backslashes → forward slashes)
-        # Do NOT strip the repo prefix — Git expects the path from its own root
         git_path = f.replace("\\", "/")
 
         try:
@@ -337,7 +340,6 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
         except subprocess.CalledProcessError:
             diff_output = ""
 
-        # If the diff is empty, fall back to parsing the file contents
         if diff_output:
             changed_lines = []
             for line in diff_output.splitlines():
@@ -354,11 +356,10 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
                 ):
                     affected_services.add(match.group(1))
         else:
-            # Fallback: parse file contents (works for simple config files)
             file_services = extract_services_from_config(f)
             affected_services.update(file_services)
 
-    # --- Fallback: if still empty, use the changed file's own name ---
+    # Fallback: if still empty, use the changed file's own name
     if not affected_services:
         for f in source_files + config_files:
             service = extract_service_name(f)
@@ -368,10 +369,8 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
     print(f"Affected services: {sorted(affected_services)}")
 
     # -------------------------------------------------------------------------
-    # Step 4.5b: Compute service-relevance scores for each test
+    # Step 4.5b: Compute service-relevance scores
     # -------------------------------------------------------------------------
-    from analyzer.scoring import compute_service_relevance
-
     service_relevance = {
         test_file: compute_service_relevance(test_file, affected_services)
         for test_file in test_files
@@ -379,18 +378,60 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
     print(f"Service-relevance scores computed for {len(service_relevance)} test(s)")
 
     # -------------------------------------------------------------------------
+    # Step 4.25: Compute IDF weights over the FULL project corpus
+    # -------------------------------------------------------------------------
+    print("\n[Step 4.25] Computing IDF weights across corpus...")
+
+    corpus_files = []
+    target_root = Path(repo_path)
+    SKIP_DIRS = {
+        "node_modules", "venv", ".git", "__pycache__",
+        "dist", "build", "coverage", ".pytest_cache",
+        "target", "bin", "obj", "images", ".idea", ".vscode",
+    }
+
+    if target_root.exists():
+        for f in target_root.rglob("*"):
+            if not f.is_file():
+                continue
+            if any(part in SKIP_DIRS for part in f.parts):
+                continue
+            ext = get_file_extension(f)
+            if ext in SOURCE_EXTENSIONS:
+                corpus_files.append(str(f))
+
+    # Include test files in the corpus as well
+    for tf in test_files:
+        if tf not in corpus_files:
+            corpus_files.append(tf)
+
+    idf_lookup = calculate_corpus_idf(corpus_files)
+    print(f"Computed IDF for {len(idf_lookup)} terms across "
+          f"{len(corpus_files)} files")
+
+    if idf_lookup:
+        top_terms = sorted(idf_lookup.items(), key=lambda x: x[1], reverse=True)[:10]
+        print("Most distinctive terms (highest IDF):")
+        for term, weight in top_terms:
+            print(f"  {weight:.2f}  {term}")
+
+        bottom_terms = sorted(idf_lookup.items(), key=lambda x: x[1])[:10]
+        print("Most common terms (lowest IDF):")
+        for term, weight in bottom_terms:
+            print(f"  {weight:.2f}  {term}")
+
+    # -------------------------------------------------------------------------
     # Step 5: Rank tests by combined score
     # -------------------------------------------------------------------------
     print("\n[Step 5] Ranking tests by relevance...")
 
-    # Weighting: service relevance is dominant, lexical is secondary
     WEIGHT_LEXICAL = 0.3
     WEIGHT_SERVICE = 0.7
     THRESHOLD = 0.55
 
     scored_tests = []
     for test_file in test_files:
-        lexical_score = calculate_score(all_terms, test_file)
+        lexical_score = calculate_score(all_terms, test_file, idf_lookup)
         service_score = service_relevance.get(test_file, 0.0)
         final_score = (WEIGHT_LEXICAL * lexical_score) + (WEIGHT_SERVICE * service_score)
         if final_score > 0:
@@ -423,7 +464,6 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
 # ENTRY POINT
 # =============================================================================
 
-
 def main():
     """Main entry point — parses CLI args, runs analysis, writes JSON."""
     parser = argparse.ArgumentParser(
@@ -442,7 +482,7 @@ def main():
     )
 
     # -------------------------------------------------------------------------
-    # Jenkins integration: write analyzer_result.json to the workspace root
+    # Jenkins integration: write analyzer_result.json
     # -------------------------------------------------------------------------
     if "error" not in results:
         output_path = Path("analyzer_result.json")
