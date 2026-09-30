@@ -1,23 +1,22 @@
-# Ignore Python cache directories.
+# Analyzer-generated artifacts
+analyzer_result.json
+test_dependencies.json
+
+# Python
+venv/
 __pycache__/
-# Ignore Python bytecode files.
 *.pyc
-# Ignore Node dependency directories.
+.pytest_cache/
+
+# Node
 node_modules/
-# Ignore Node coverage output.
-coverage/
-# Ignore Java build output.
+npm-debug.log
+
+# Java
 target/
-# Ignore .NET build output.
+*.class
+
+# .NET
 bin/
 obj/
-# Ignore IDE metadata.
-.vscode/
-.idea/
-# Ignore OS metadata.
-.DS_Store
-Thumbs.db
-# Ignore generated reports.
-reports/
-# Ignore temporary logs.
-*.log
+*.dll

@@ -37,34 +37,46 @@ from analyzer.config import SOURCE_EXTENSIONS
 
 def extract_service_name(file_path):
     """
-    Extract the service root name from a file path.
+    Extract the service name from a file path.
 
-    Universal — works for any project with any naming convention.
-    Strips common suffixes (config, service, test, spec, service_test, etc.)
-    to find the base service identifier.
+    Priority order:
+      1. Parent directory named "<service>-service" or "<service>_service"
+      2. Filename stem with common suffixes stripped
+      3. Parent directory name
+      4. Filename stem as last resort
+
+    Universal — works for monorepos and flat repos alike.
 
     Examples:
-        rideshareservices/config/driver_config.py         -> "driver"
-        rideshareservices/config/matching_config.py       -> "matching"
-        rideshareservices/driver_service.py               -> "driver"
-        tests/test_driver_service.py                      -> "driver"
-        ecommerce_services/config/cart.config.js          -> "cart"
-        ecommerce_services/cart_service.js                -> "cart"
-        src/paymentservice/index.js                       -> "paymentservice"
-        release/kubernetes-manifests.yaml                 -> "kubernetes"
+        media_streaming_services/auth-service/src/app.py           -> "auth"
+        media_streaming_services/notification-service/Service.cs   -> "notification"
+        media_streaming_services/catalog-service/src/app.js        -> "catalog"
+        rideshare_services/config/driver_config.py                 -> "driver"
+        rideshare_services/driver_service.py                       -> "driver"
+        tests/test_driver_service.py                               -> "driver"
+        ecommerce_services/config/cart.config.js                   -> "cart"
+        src/paymentservice/index.js                                -> "paymentservice"
     """
-    from pathlib import Path
     path = Path(file_path)
-    name = path.stem.lower()          # e.g., "driver_config", "test_driver_service"
 
-    # --- Strip leading test/spec prefixes ---
+    # ---- Priority 1: parent dir named "<service>-service" or "<service>_service" ----
+    # This handles monorepos: auth-service/src/app.py -> "auth"
+    for part in reversed(path.parts[:-1]):        # walk up, closest first
+        part_lower = part.lower()
+        for suffix in ("-service", "_service"):
+            if part_lower.endswith(suffix):
+                return part_lower[: -len(suffix)]
+
+    # ---- Priority 2: filename stem with suffixes stripped ----
+    name = path.stem.lower()
+
+    # Strip leading test/spec prefixes
     for prefix in ("test_", "spec_", "tests_", "itest_", "it_"):
         if name.startswith(prefix):
             name = name[len(prefix):]
             break
 
-    # --- Strip known trailing suffixes (order matters: longest first) ---
-    # Sort by length descending so "service_test" is stripped before "test"
+    # Strip known trailing suffixes
     SUFFIXES = [
         "_service_test", "_service_tests", "_service_spec",
         ".service.test", ".service.spec", ".service",
@@ -87,12 +99,25 @@ def extract_service_name(file_path):
             name = name[: -len(suffix)]
             break
 
-    # --- Cleanup: strip trailing/leading separators ---
     name = name.strip("._-")
 
-    # --- Final fallback: if empty, use the original stem ---
-    if not name:
-        name = path.stem.lower()
+    # ---- Priority 3: if name is empty or a generic token, use parent dir ----
+    GENERIC_NAMES = {"app", "main", "index", "server", "service",
+                     "handler", "controller", "model", "view", "__init__"}
+    if not name or name in GENERIC_NAMES:
+        # Use the nearest parent directory that isn't generic
+        for part in reversed(path.parts[:-1]):
+            part_lower = part.lower()
+            if part_lower in ("src", "test", "tests", "lib", "app",
+                              "main", "java", "python", "js"):
+                continue
+            # Clean the parent name too
+            for suffix in ("-service", "_service", "-api", "_api"):
+                if part_lower.endswith(suffix):
+                    return part_lower[: -len(suffix)]
+            return part_lower
+        # Absolute fallback
+        return name or path.stem.lower()
 
     return name
 

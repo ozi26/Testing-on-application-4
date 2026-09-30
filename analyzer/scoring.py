@@ -59,64 +59,68 @@ def calculate_score(changed_terms, test_file_path):
     # Return the calculated score
     return min(base_score + bonus, 1.0)
 
+
 def compute_service_relevance(test_file, affected_services):
     """
-    Compute a service-relevance score between 0.0 and 1.0 based on
-    how strongly a test file is tied to an affected service.
-    
-    Scoring:
-      - 1.0: Test filename directly names the affected service
-             (e.g., paymentservice.test.js when paymentservice changed)
-      - 0.7: Test filename contains the service root word
-             (e.g., payment_flow.test.js when paymentservice changed)
-      - 0.4: Test file content explicitly mentions the affected service
-      - 0.2: Test file content mentions the service root word
-      - 0.0: No match at all
-    
-    Args:
-        test_file: Path to the test file
-        affected_services: Set of service names that changed
-    
-    Returns:
-        A float between 0.0 and 1.0.
+    Compute a service-relevance score between 0.0 and 1.0.
+
+    Matches against BOTH the filename AND the full path so that tests
+    inside '<service>-service/tests/' are correctly recognized.
     """
     from pathlib import Path
     from analyzer.file_utils import read_text_file
-    
-    best_score = 0.0
-    filename = Path(test_file).stem.lower()
-    
+
+    test_path = Path(test_file)
+    filename = test_path.stem.lower()
+    full_path = str(test_file).lower().replace("\\", "/")
+
     try:
         content = read_text_file(test_file).lower()
     except Exception:
         content = ""
-    
+
+    best_score = 0.0
+
     for service in affected_services:
-        service_lower = service.lower()          # e.g. "paymentservice"
-        root = service_lower.replace("service", "").strip()  # e.g. "payment"
-        
-        # --- Filename matches (strongest signals) ---
-        if service_lower and service_lower in filename:
+        service_lower = service.lower()
+        root = service_lower.replace("service", "").strip("-_")
+
+        # --- Filename match (strongest) ---
+        if service_lower in filename:
             best_score = max(best_score, 1.0)
             continue
-        
-        # Root-word match in filename (e.g. "payment" in "payment_test")
         if len(root) >= 4 and root in filename:
             best_score = max(best_score, 0.7)
             continue
-        
-        # --- Content matches (weaker signals) ---
-        # Count occurrences to distinguish a strong mention from a passing reference
-        if service_lower and service_lower in content:
+
+        # --- FULL PATH match (needed for monorepos) ---
+        # Matches: ".../streaming-service/tests/test_unit.js"
+        if f"{service_lower}-service" in full_path:
+            best_score = max(best_score, 0.9)
+            continue
+        if f"{service_lower}_service" in full_path:
+            best_score = max(best_score, 0.9)
+            continue
+        # Match directory segment equal to the service name
+        parts = full_path.split("/")
+        if service_lower in parts:
+            best_score = max(best_score, 0.8)
+            continue
+        if root and len(root) >= 4 and f"{root}-service" in full_path:
+            best_score = max(best_score, 0.7)
+            continue
+        if root and len(root) >= 4 and root in parts:
+            best_score = max(best_score, 0.6)
+            continue
+
+        # --- Content match (weakest) ---
+        if service_lower in content:
             best_score = max(best_score, 0.4)
             continue
-        
         if len(root) >= 5 and root in content:
-            # Count occurrences: more mentions = stronger signal
-            occurrences = content.count(root)
-            score = min(0.2 + (0.05 * occurrences), 0.4)
-            best_score = max(best_score, score)
-    
+            best_score = max(best_score, 0.3)
+            continue
+
     return best_score
 
 def filename_match_bonus(changed_file, test_file):

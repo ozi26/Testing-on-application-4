@@ -12,64 +12,59 @@ from analyzer.file_utils import is_config_file, is_source_file
 
 def get_changed_files(repo_path=".", commit_range="HEAD~1..HEAD"):
     """
-    Get a list of files that changed in a Git commit or range.
-    
-    This function runs a Git command to find out which files were
-    modified, added, or deleted in a specific commit or range of commits.
-    
-    Args:
-        repo_path: Path to the Git repository (default: current directory)
-        commit_range: Git commit range to check (default: last commit)
-                      Examples: "HEAD~1..HEAD", "main..feature-branch"
-    
-    Returns:
-        A list of file paths (relative to the repository root) that changed.
-        Returns an empty list if the Git command fails.
-    
-    Example:
-        # Get files changed in the last commit
-        files = get_changed_files()
-        
-        # Get files changed between two branches
-        files = get_changed_files(commit_range="main..my-feature")
+    Get a list of files that changed in a Git commit range.
+
+    Automatically excludes generated/analyzer artifacts so they don't
+    pollute the analysis (analyzer_result.json, test_dependencies.json,
+    coverage reports, etc.).
     """
+    # Generated artifacts to ignore
+    IGNORED_FILES = {
+        "analyzer_result.json",
+        "test_dependencies.json",
+        ".coverage",
+        "coverage.xml",
+        "pytest.xml",
+    }
+    IGNORED_SUFFIXES = (".pyc", ".pyo", ".class", ".log", ".tmp")
+
     try:
-        # Run the Git command to get changed files
-        # --name-only: only show file names, not the actual changes
-        # --diff-filter: only include Added, Copied, Modified, Renamed files
-        #                (exclude Deleted files since we can't analyze them)
         result = subprocess.run(
             ["git", "diff", "--name-only", "--diff-filter=ACMR", commit_range],
-            cwd=repo_path,          # Run the command in the repository directory
-            capture_output=True,    # Capture stdout and stderr
-            text=True,              # Return output as string (not bytes)
-            check=True,             # Raise an exception if the command fails
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        
-        # Split the output into individual file paths
-        # strip() removes leading/trailing whitespace
-        # split("\n") splits by newlines
-        # We filter out empty strings that might appear
-        changed_files = [
-            line.strip()
-            for line in result.stdout.strip().split("\n")
-            if line.strip()
-        ]
-        
-        # Return the list of changed files
+
+        changed_files = []
+        for line in result.stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Skip generated/analyzer artifacts
+            filename = line.split("/")[-1]
+            if filename in IGNORED_FILES:
+                continue
+            if any(line.endswith(s) for s in IGNORED_SUFFIXES):
+                continue
+            # Skip files inside venv/, node_modules/, __pycache__/, .pytest_cache/
+            if any(part in line.split("/") for part in
+                   ("venv", "node_modules", "__pycache__",
+                    ".pytest_cache", ".git", "dist", "build", "coverage")):
+                continue
+
+            changed_files.append(line)
+
         return changed_files
-        
+
     except subprocess.CalledProcessError as e:
-        # If the Git command fails (e.g., not a Git repository),
-        # print an error message and return an empty list
         print(f"Error running git command: {e}")
         return []
     except FileNotFoundError:
-        # If Git is not installed on the system,
-        # print an error message and return an empty list
-        print("Error: Git is not installed or not in PATH")
+        print("Error: Git is not installed")
         return []
-
 
 def categorize_changed_files(changed_files):
     """
