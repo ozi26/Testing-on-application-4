@@ -1,0 +1,448 @@
+# =============================================================================
+# RUN ANALYZER — Test Impact Analyzer for Microservices
+# =============================================================================
+# Main entry point for the analyzer. Detects changes in source code and
+# configuration files, selects the minimal subset of tests that must run,
+# and outputs results as analyzer_result.json for the Jenkins pipeline.
+# =============================================================================
+
+import sys
+import re
+import json
+import subprocess
+import tempfile
+import argparse
+from pathlib import Path
+
+# Make the project root importable
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from analyzer.git_changes import get_changed_files, categorize_changed_files
+from analyzer.code_parser import extract_code_terms
+from analyzer.config_parser import parse_config_file
+from analyzer.scoring import calculate_score, compute_service_relevance
+from analyzer.file_utils import get_file_extension, is_test_file
+from analyzer.config import SOURCE_EXTENSIONS
+
+
+# =============================================================================
+# MODULE-LEVEL HELPERS
+# =============================================================================
+# These MUST be at column 0 (no indentation) so they can be imported and
+# called from anywhere in the pipeline. Do not nest them inside other
+# functions — that breaks the analyzer's import graph.
+# =============================================================================
+
+
+def extract_service_name(file_path):
+    """
+    Extract the service root name from a file path.
+
+    Universal — works for any project with any naming convention.
+    Strips common suffixes (config, service, test, spec, service_test, etc.)
+    to find the base service identifier.
+
+    Examples:
+        rideshareservices/config/driver_config.py         -> "driver"
+        rideshareservices/config/matching_config.py       -> "matching"
+        rideshareservices/driver_service.py               -> "driver"
+        tests/test_driver_service.py                      -> "driver"
+        ecommerce_services/config/cart.config.js          -> "cart"
+        ecommerce_services/cart_service.js                -> "cart"
+        src/paymentservice/index.js                       -> "paymentservice"
+        release/kubernetes-manifests.yaml                 -> "kubernetes"
+    """
+    from pathlib import Path
+    path = Path(file_path)
+    name = path.stem.lower()          # e.g., "driver_config", "test_driver_service"
+
+    # --- Strip leading test/spec prefixes ---
+    for prefix in ("test_", "spec_", "tests_", "itest_", "it_"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+
+    # --- Strip known trailing suffixes (order matters: longest first) ---
+    # Sort by length descending so "service_test" is stripped before "test"
+    SUFFIXES = [
+        "_service_test", "_service_tests", "_service_spec",
+        ".service.test", ".service.spec", ".service",
+        "_service", "service",
+        "_config", ".config", "-config",
+        "_settings", ".settings",
+        "_test", ".test", "_tests", ".tests",
+        "_spec", ".spec",
+        "_server", ".server",
+        "_client", ".client",
+        "_handler", ".handler",
+        "_controller", ".controller",
+        "_repository", ".repository",
+        "_dao", ".dao",
+        "_model", ".model",
+        "_view", ".view",
+    ]
+    for suffix in sorted(SUFFIXES, key=len, reverse=True):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+
+    # --- Cleanup: strip trailing/leading separators ---
+    name = name.strip("._-")
+
+    # --- Final fallback: if empty, use the original stem ---
+    if not name:
+        name = path.stem.lower()
+
+    return name
+
+def extract_services_from_config(config_file):
+    """
+    Extract service names from a config file's CONTENTS.
+
+    Looks for:
+      - `metadata.name` fields (Kubernetes manifests)
+      - `env[].value` hostnames like "paymentservice:50051"
+
+    Returns a set of service names (possibly empty).
+    """
+    import yaml  # imported here to keep the module importable even if PyYAML is missing
+
+    services = set()
+    suffix = Path(config_file).suffix.lower()
+
+    # Only parse YAML files deeply for now
+    if suffix not in (".yaml", ".yml"):
+        return services
+
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            documents = list(yaml.safe_load_all(f))
+    except Exception:
+        return services
+
+    for doc in documents:
+        if not isinstance(doc, dict):
+            continue
+
+        # --- metadata.name ---
+        metadata = doc.get("metadata", {})
+        if isinstance(metadata, dict):
+            name = metadata.get("name")
+            if isinstance(name, str) and name:
+                services.add(name)
+
+        # --- env[].value hostnames ---
+        spec = doc.get("spec", {})
+        if isinstance(spec, dict):
+            template = spec.get("template", {})
+            if isinstance(template, dict):
+                spec2 = template.get("spec", {})
+                if isinstance(spec2, dict):
+                    containers = spec2.get("containers", []) or []
+                    for container in containers:
+                        if not isinstance(container, dict):
+                            continue
+                        env_list = container.get("env", []) or []
+                        for env_var in env_list:
+                            if not isinstance(env_var, dict):
+                                continue
+                            value = env_var.get("value")
+                            if not isinstance(value, str):
+                                continue
+                            match = re.match(
+                                r"^([a-z][a-z0-9\-]*service)(:\d+)?$", value
+                            )
+                            if match:
+                                services.add(match.group(1))
+
+    return services
+
+
+def find_test_files(test_dir):
+    """
+    Find all test files in a directory, across any programming language.
+    Uses language-agnostic pattern matching from analyzer.file_utils.
+    """
+    test_path = Path(test_dir)
+    if not test_path.exists():
+        return []
+
+    test_files = []
+    SKIP_DIRS = {
+        "node_modules", "venv", ".git", "__pycache__",
+        "dist", "build", "coverage", ".pytest_cache",
+    }
+
+    for file_path in test_path.rglob("*"):
+        if not file_path.is_file():
+            continue
+
+        # Skip common non-source directories
+        if any(p in file_path.parts for p in SKIP_DIRS):
+            continue
+
+        # Only source-code files can be tests
+        ext = get_file_extension(file_path)
+        if ext not in SOURCE_EXTENSIONS:
+            continue
+
+        # Apply the language-agnostic test detector
+        if is_test_file(str(file_path)):
+            test_files.append(str(file_path))
+
+    return test_files
+
+
+# =============================================================================
+# MAIN ANALYSIS PIPELINE
+# =============================================================================
+
+
+def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"):
+    """
+    Analyze changes and select affected tests.
+
+    Args:
+        repo_path: Path to the Git repository being analyzed
+        commit_range: Git range (e.g., "HEAD~1..HEAD")
+        test_dir: Directory containing test files
+
+    Returns:
+        Dict with keys: changed_files, source_files, config_files,
+        code_terms, config_terms, all_terms, test_files, ranked_tests.
+        Returns {"error": "..."} on failure.
+    """
+    print("=" * 60)
+    print("TEST IMPACT ANALYZER")
+    print("=" * 60)
+
+    # -------------------------------------------------------------------------
+    # Step 1: Get changed files from Git
+    # -------------------------------------------------------------------------
+    print("\n[Step 1] Getting changed files from Git...")
+    changed_files = get_changed_files(repo_path, commit_range)
+
+    if not changed_files:
+        print("No changed files found. Nothing to analyze.")
+        return {"error": "No changes found"}
+
+    print(f"Found {len(changed_files)} changed file(s):")
+    for f in changed_files:
+        print(f"  - {f}")
+
+    # -------------------------------------------------------------------------
+    # Step 2: Categorize into source and config files
+    # -------------------------------------------------------------------------
+    print("\n[Step 2] Categorizing changed files...")
+    source_files, config_files = categorize_changed_files(changed_files)
+
+    print(f"Source code files ({len(source_files)}):")
+    for f in source_files:
+        print(f"  - {f}")
+
+    print(f"Configuration files ({len(config_files)}):")
+    for f in config_files:
+        print(f"  - {f}")
+
+    # -------------------------------------------------------------------------
+    # Step 3: Extract terms from changed files
+    # -------------------------------------------------------------------------
+    print("\n[Step 3] Extracting terms from changed files...")
+
+    # Source code terms
+    code_terms = extract_code_terms(source_files)
+    print(f"Extracted {len(code_terms)} terms from source code files")
+
+    # Config file terms — parse each config file for its key names
+    config_terms = set()
+    for config_file in config_files:
+        try:
+            parsed = parse_config_file(config_file)
+            for key in parsed.keys():
+                from analyzer.file_utils import extract_words
+                config_terms.update(extract_words(str(key)))
+        except Exception as e:
+            print(f"  [WARN] Could not parse {config_file}: {e}")
+
+    print(f"Extracted {len(config_terms)} terms from configuration files")
+
+    all_terms = code_terms | config_terms
+    print(f"Total unique terms: {len(all_terms)}")
+
+    # -------------------------------------------------------------------------
+    # Step 4: Find all test files
+    # -------------------------------------------------------------------------
+    print("\n[Step 4] Finding test files...")
+    test_files = find_test_files(test_dir)
+
+    if not test_files:
+        print(f"No test files found in: {test_dir}")
+        return {"error": "No test files found"}
+
+    print(f"Found {len(test_files)} test file(s):")
+    for f in test_files:
+        print(f"  - {f}")
+
+    # -------------------------------------------------------------------------
+    # Step 4.5a: Extract affected service names from changed files
+    # -------------------------------------------------------------------------
+    affected_services = set()
+
+    # --- From source code file paths ---
+    for f in source_files:
+        service = extract_service_name(f)
+        if service:
+            affected_services.add(service)
+
+    # --- From config file contents (targeted, diff-based) ---
+    for f in config_files:
+        # Normalize path for Git (windows backslashes → forward slashes)
+        # Do NOT strip the repo prefix — Git expects the path from its own root
+        git_path = f.replace("\\", "/")
+
+        try:
+            diff_output = subprocess.run(
+                ["git", "diff", commit_range, "--", git_path],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+        except subprocess.CalledProcessError:
+            diff_output = ""
+
+        # If the diff is empty, fall back to parsing the file contents
+        if diff_output:
+            changed_lines = []
+            for line in diff_output.splitlines():
+                if line.startswith(("---", "+++", "@@")):
+                    continue
+                if line.startswith(("+", "-")):
+                    changed_lines.append(line[1:])
+
+            for line in changed_lines:
+                for match in re.finditer(
+                    r'(?:name|app|value):\s*["\']?'
+                    r'([a-z][a-z0-9\-]*(?:service|cart|frontend[a-z\-]*))',
+                    line,
+                ):
+                    affected_services.add(match.group(1))
+        else:
+            # Fallback: parse file contents (works for simple config files)
+            file_services = extract_services_from_config(f)
+            affected_services.update(file_services)
+
+    # --- Fallback: if still empty, use the changed file's own name ---
+    if not affected_services:
+        for f in source_files + config_files:
+            service = extract_service_name(f)
+            if service:
+                affected_services.add(service)
+
+    print(f"Affected services: {sorted(affected_services)}")
+
+    # -------------------------------------------------------------------------
+    # Step 4.5b: Compute service-relevance scores for each test
+    # -------------------------------------------------------------------------
+    from analyzer.scoring import compute_service_relevance
+
+    service_relevance = {
+        test_file: compute_service_relevance(test_file, affected_services)
+        for test_file in test_files
+    }
+    print(f"Service-relevance scores computed for {len(service_relevance)} test(s)")
+
+    # -------------------------------------------------------------------------
+    # Step 5: Rank tests by combined score
+    # -------------------------------------------------------------------------
+    print("\n[Step 5] Ranking tests by relevance...")
+
+    # Weighting: service relevance is dominant, lexical is secondary
+    WEIGHT_LEXICAL = 0.2
+    WEIGHT_SERVICE = 0.8
+    THRESHOLD = 0.40
+
+    scored_tests = []
+    for test_file in test_files:
+        lexical_score = calculate_score(all_terms, test_file)
+        service_score = service_relevance.get(test_file, 0.0)
+        final_score = (WEIGHT_LEXICAL * lexical_score) + (WEIGHT_SERVICE * service_score)
+        if final_score > 0:
+            scored_tests.append((test_file, final_score))
+
+    scored_tests.sort(key=lambda x: x[1], reverse=True)
+    ranked_tests = [(t, s) for t, s in scored_tests if s >= THRESHOLD]
+
+    print(f"Ranked tests ({len(ranked_tests)} above threshold {THRESHOLD}):")
+    for test_file, score in ranked_tests:
+        print(f"  {score:.3f}  {test_file}")
+
+    print("\n" + "=" * 60)
+    print("ANALYSIS COMPLETE")
+    print("=" * 60)
+
+    return {
+        "changed_files": changed_files,
+        "source_files": source_files,
+        "config_files": config_files,
+        "code_terms": code_terms,
+        "config_terms": config_terms,
+        "all_terms": all_terms,
+        "test_files": test_files,
+        "ranked_tests": ranked_tests,
+    }
+
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
+
+
+def main():
+    """Main entry point — parses CLI args, runs analysis, writes JSON."""
+    parser = argparse.ArgumentParser(
+        description="Test Impact Analyzer — select affected tests based on changes"
+    )
+    parser.add_argument("--repo", default=".", help="Path to the Git repository")
+    parser.add_argument("--range", default="HEAD~1..HEAD", help="Git commit range")
+    parser.add_argument("--tests", default="tests", help="Directory containing test files")
+
+    args = parser.parse_args()
+
+    results = analyze_changes(
+        repo_path=args.repo,
+        commit_range=args.range,
+        test_dir=args.tests,
+    )
+
+    # -------------------------------------------------------------------------
+    # Jenkins integration: write analyzer_result.json to the workspace root
+    # -------------------------------------------------------------------------
+    if "error" not in results:
+        output_path = Path("analyzer_result.json")
+
+        jenkins_output = {
+            "affected_tests": [test for test, score in results["ranked_tests"]],
+            "has_affected_tests": len(results["ranked_tests"]) > 0,
+            "test_count": len(results["ranked_tests"]),
+            "summary": {
+                "changed_files": results["changed_files"],
+                "source_files": results["source_files"],
+                "config_files": results["config_files"],
+                "total_tests_analyzed": len(results["test_files"]),
+                "affected_tests_count": len(results["ranked_tests"]),
+            },
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(jenkins_output, f, indent=2, ensure_ascii=False)
+
+        print(f"\n[Jenkins] Result written to: {output_path}")
+        print(f"[Jenkins] Affected tests: {jenkins_output['test_count']}")
+
+    sys.exit(0 if "error" not in results else 1)
+
+
+if __name__ == "__main__":
+    main()
