@@ -1,4 +1,5 @@
 // Catalog service: stores and serves the media catalogue.
+
 const http = require('http'); // Load Node's built-in HTTP server.
 const config = require('/app/config/catalog.config'); // Load centralized JavaScript configuration.
 
@@ -34,4 +35,5 @@ if (require.main === module) { // Start the network server only when executed di
   createServer().listen(config.port, () => console.log(`${config.serviceName} listening on ${config.port}`)); // Listen on the configured port.
 } // End direct execution block.
 
-module.exports = { createServer, movies, getMovie, handleRequest }; // Export testable service functions.
+// Export testable service functions.
+module.exports = { createServer, movies, getMovie, handleRequest }; 
