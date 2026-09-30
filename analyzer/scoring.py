@@ -7,57 +7,60 @@
 
 from analyzer.file_utils import extract_words, read_text_file
 
+def calculate_score(changed_terms, test_file_path, idf_lookup=None):
+    """
+    Calculate a weighted relevance score between changed terms and a test.
 
-def calculate_score(changed_terms, test_file_path):
-    """
-    Calculate a relevance score between changed terms and a test file.
-    
-    This function compares the words extracted from changed files with
-    the words in a test file. The more words they have in common, the
-    higher the score, meaning the test is more likely to be affected.
-    
+    Uses TF-IDF-like weighting: terms that appear in MANY test files get
+    low weight, terms unique to a few files get high weight. This eliminates
+    the "everything shares keywords" problem that plagues simple lexical
+    matching.
+
     Args:
-        changed_terms: A set of words from the changed files
-        test_file_path: Path to the test file to score
-    
+        changed_terms: Set of words from the changed files
+        test_file_path: Path to the test file
+        idf_lookup: Optional dict mapping term -> IDF weight. If None,
+                    weights are computed on-the-fly from common terms.
+
     Returns:
-        A float between 0.0 and 1.0 representing the relevance score.
-        Higher scores mean the test is more likely to be affected.
-    
-    Example:
-        changed_terms = {"payment", "timeout", "retry"}
-        score = calculate_score(changed_terms, "test_payment.py")
-        # If test_payment.py contains "payment" and "timeout",
-        # the score will be higher than if it doesn't contain them.
+        Float between 0.0 and 1.0.
     """
-    # Read the test file content
+    from analyzer.file_utils import extract_words, read_text_file
+
     test_content = read_text_file(test_file_path)
-    
-    # If the test file couldn't be read, return a score of 0
     if not test_content:
         return 0.0
-    
-    # Extract words from the test file
+
     test_terms = extract_words(test_content)
-    
-    # If the test file has no words, return a score of 0
     if not test_terms:
         return 0.0
-    
-    # Find the intersection (common words) between changed terms and test terms
+
     common_terms = changed_terms.intersection(test_terms)
-    
-    # Calculate the score as the ratio of common terms to changed terms
-    # This gives us a value between 0 and 1
-    # A score of 1.0 means the test contains ALL the changed terms
-    # A score of 0.0 means the test contains NONE of the changed terms
-    base_score = len(common_terms) / len(changed_terms) if changed_terms else 0.0
+    if not common_terms:
+        return 0.0
 
-    # Add filename-based bonus
-    bonus = filename_match_bonus(test_file_path, test_file_path)
+    # If no IDF lookup is provided, use a hardcoded set of universally
+    # common programming keywords. These get zero weight in scoring.
+    from analyzer.file_utils import STOP_WORDS
 
-    # Return the calculated score
-    return min(base_score + bonus, 1.0)
+    # Weighted sum: each common term contributes its weight.
+    # Universal keywords (STOP_WORDS) contribute 0.
+    # Everything else contributes 1.
+    weighted_common = sum(
+        1.0 for term in common_terms
+        if term not in STOP_WORDS
+    )
+
+    # Normalize by the number of NON-STOP-WORD terms in the changed set.
+    weighted_changed = sum(
+        1.0 for term in changed_terms
+        if term not in STOP_WORDS
+    )
+
+    if weighted_changed == 0:
+        return 0.0
+
+    return weighted_common / weighted_changed
 
 def compute_service_relevance(test_file, affected_services):
     """

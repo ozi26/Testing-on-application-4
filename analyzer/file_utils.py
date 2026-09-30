@@ -41,71 +41,91 @@ def read_text_file(file_path):
 # create noise in lexical matching. Filtering these out dramatically
 # improves test selection precision.
 # -----------------------------------------------------------------------------
+# Universal programming stop-words — shared across ALL languages.
+# Terms here are weighted ZERO in scoring because they appear in
+# virtually every file regardless of domain.
+
 STOP_WORDS = {
-    # Universal programming keywords (across all languages)
+    # --- Language keywords (JS, Python, Java, C#, Go, etc.) ---
     "if", "else", "elif", "for", "while", "do", "switch", "case", "break",
     "continue", "return", "yield", "try", "catch", "except", "finally",
     "throw", "throws", "raise", "class", "interface", "struct", "enum",
-    "public", "private", "protected", "static", "final", "const",
-    "var", "let", "function", "func", "def", "method", "new", "this",
-    "self", "super", "extends", "implements", "import", "from", "require",
+    "public", "private", "protected", "static", "final", "const", "let",
+    "var", "function", "func", "def", "method", "new", "this", "self",
+    "super", "extends", "implements", "import", "from", "require",
     "export", "module", "package", "namespace", "using", "include",
-    
-    # Common type names
+    "async", "await", "promise", "callback", "resolve", "reject",
+    "lambda", "global", "nonlocal", "pass", "assert", "with", "as",
+    "go", "defer", "chan", "select", "context", "fmt",
+    "using", "task", "get", "set", "init", "main", "funcs",
+
+    # --- Type names ---
     "int", "integer", "float", "double", "string", "str", "bool", "boolean",
     "char", "byte", "long", "short", "unsigned", "signed", "void", "null",
-    "nil", "none", "true", "false", "undefined", "nan", "inf",
-    
-    # Common variable names that appear everywhere
+    "nil", "none", "true", "false", "undefined", "nan", "inf", "any", "object",
+
+    # --- Common variable names ---
     "err", "error", "errors", "msg", "message", "value", "val", "result",
     "res", "req", "request", "response", "data", "item", "items",
     "obj", "object", "array", "list", "dict", "map", "set", "key",
     "name", "type", "kind", "id", "index", "count", "length", "size",
-    "args", "args", "kwargs", "params", "options", "config", "settings",
-    
-    # Common English words
+    "args", "kwargs", "params", "options", "config", "settings",
+    "input", "output", "source", "target", "dest", "base", "root",
+    "file", "path", "url", "uri", "http", "https", "host", "port",
+    "user", "users", "admin", "session", "token", "auth", "login",
+    "create", "read", "update", "delete", "list", "find", "search",
+    "add", "remove", "push", "pop", "save", "load", "fetch", "send",
+
+    # --- API/HTTP verbs (shared across all languages) ---
+    "get", "post", "put", "patch", "delete", "head", "options",
+    "route", "router", "endpoint", "api", "rest", "graphql",
+    "json", "jsonify", "parse", "stringify", "serialize", "deserialize",
+    "body", "header", "headers", "param", "params", "query", "payload",
+    "status", "code", "statuscode", "content", "mime", "cookie",
+    "middleware", "handler", "controller", "service", "client", "server",
+    "app", "server", "express", "flask", "fastapi", "django", "spring",
+    "httpstatus", "responseentity", "requestentity",
+
+    # --- Test framework keywords ---
+    "describe", "test", "it", "expect", "assert", "should", "before",
+    "after", "beforeeach", "aftereach", "jest", "mocha", "jasmine",
+    "pytest", "unittest", "setup", "teardown", "fixture", "mock",
+    "stub", "spy", "patch", "monkeypatch",
+
+    # --- Common English (from comments/strings) ---
     "the", "a", "an", "and", "or", "not", "is", "are", "was", "were",
     "this", "that", "these", "those", "with", "without", "for", "of",
     "to", "in", "on", "at", "by", "as", "if", "then", "when", "where",
-    
-    # Common JS/TS framework names
-    "async", "await", "promise", "callback", "resolve", "reject",
-    "describe", "test", "it", "expect", "assert", "should", "before",
-    "after", "beforeEach", "afterEach", "jest", "mocha", "jasmine",
-    
-    # Common Go keywords
-    "go", "defer", "chan", "select", "interface", "context", "fmt",
-    
-    # Common Python keywords
-    "lambda", "global", "nonlocal", "pass", "assert", "with", "as",
-    
-    # Common C# keywords
-    "using", "namespace", "async", "await", "task", "var", "get", "set",
+    "will", "should", "would", "could", "have", "has", "had",
+    "all", "any", "some", "each", "every", "only", "also", "just",
+
+    # --- Common test-path words ---
+    "test", "tests", "unit", "integration", "spec", "specs", "check",
+    "verify", "validate", "success", "failure", "pass", "fail",
+    "given", "when", "then", "arrange", "act", "assert",
+
+    # --- Common config/JSON keys ---
+    "config", "configuration", "settings", "option", "options",
+    "default", "enabled", "disabled", "timeout", "retry", "attempts",
+    "host", "port", "url", "protocol", "scheme", "path", "endpoint",
+    "version", "env", "environment", "dev", "test", "prod", "staging",
+    "database", "db", "cache", "redis", "queue", "topic", "channel",
+    "log", "logger", "level", "debug", "info", "warn", "error",
+    "max", "min", "limit", "threshold", "size", "count", "interval",
 }
 
 
 def extract_words(text):
     """
-    Extract meaningful words from a piece of text, filtering out
-    stop-words (common programming keywords) to reduce lexical noise.
-    
-    Args:
-        text: A string containing code or configuration text
-    
-    Returns:
-        A set of lowercase words found in the text, with stop-words removed.
+    Extract meaningful words from text, excluding universal stop-words.
     """
-    # Extract all identifier-like tokens
+    import re
     pattern = r"[A-Za-z_][A-Za-z0-9_.]*"
     words = re.findall(pattern, text)
-    
-    # Convert to lowercase, filter out stop-words, and deduplicate
     return set(
-        word.lower()
-        for word in words
-        if word.lower() not in STOP_WORDS
+        w.lower() for w in words
+        if w.lower() not in STOP_WORDS and len(w) > 2
     )
-
 
 def get_file_extension(file_path):
     """
