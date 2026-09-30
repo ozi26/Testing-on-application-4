@@ -1,4 +1,5 @@
 // Streaming service: creates playback sessions for media items.
+
 const http = require('http'); // Load Node's built-in HTTP server.
 const config = require('/app/config/streaming.config'); // Load centralized configuration.
 
