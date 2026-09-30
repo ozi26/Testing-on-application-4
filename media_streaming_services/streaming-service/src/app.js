@@ -1,7 +1,9 @@
 // Streaming service: creates playback sessions for media items.
 
-const http = require('http'); // Load Node's built-in HTTP server.
-const config = require('/app/config/streaming.config'); // Load centralized configuration.
+// Load Node's built-in HTTP server.
+const http = require('http'); 
+// Load centralized configuration.
+const config = require('/app/config/streaming.config'); 
 
 function createPlaybackSession(userId, mediaId) { // Build a playback session for a user and media item.
   if (!userId || !mediaId) throw new Error('userId and mediaId are required'); // Validate required values.
