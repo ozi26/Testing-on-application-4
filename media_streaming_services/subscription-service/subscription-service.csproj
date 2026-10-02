@@ -1,4 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Target .NET 8. -->
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SubscriptionService</RootNamespace>
+    <AssemblyName>subscription-service</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Exclude the tests/ folder from the main project's compilation.
+       The tests/ folder has its own .csproj that compiles those files. -->
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <Compile Remove="tests/**" />
+    <None Remove="tests\**" />
+    <None Remove="tests/**" />
+  </ItemGroup>
+
 </Project>

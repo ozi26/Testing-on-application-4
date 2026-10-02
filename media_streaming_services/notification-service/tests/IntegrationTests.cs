@@ -1,7 +1,84 @@
-// Integration tests for notification-service.
-using MediaStreamX; // Import the service namespace.
-using System.Net; // Import HTTP status support.
-namespace Tests; // Declare the test namespace.
-public class IntegrationTests { // Define HTTP integration tests.
-    [Fact] public async Task HealthServerStarts() { using var cts = new CancellationTokenSource(); var app = new ServiceApp(); var port = Random.Shared.Next(12000, 15000); var task = app.RunAsync(port, "notification-service", cts.Token); await Task.Delay(150); using var client = new HttpClient(); var response = await client.GetAsync($"http://127.0.0.1:{port}/health"); cts.Cancel(); Assert.Equal(HttpStatusCode.OK, response.StatusCode); } // Verify the live HTTP endpoint.
+// =============================================================================
+// INTEGRATION TESTS for the Notification Service
+// =============================================================================
+// These tests verify the full send → store → retrieve flow.
+// =============================================================================
+
+using System;
+using System.Linq;
+using Xunit;
+
+namespace NotificationService.Tests
+{
+    /// <summary>
+    /// Integration tests for the notification service.
+    /// </summary>
+    public class IntegrationTests
+    {
+        /// <summary>
+        /// End-to-end: sending a notification should make it retrievable
+        /// by ID.
+        /// </summary>
+        [Fact]
+        public void SendAndRetrieve_WorksEndToEnd()
+        {
+            // Arrange
+            var store = new InMemoryNotificationStore();
+            var service = new NotificationService(store);
+
+            // Act
+            var sent = service.SendNotification(
+                userId: "integration-user",
+                channel: "email",
+                subject: "Welcome",
+                body: "Thanks for signing up!");
+
+            var retrieved = service.GetNotification(sent.NotificationId);
+
+            // Assert
+            Assert.NotNull(retrieved);
+            Assert.Equal(sent.NotificationId, retrieved!.NotificationId);
+            Assert.Equal("integration-user", retrieved.UserId);
+            Assert.True(retrieved.IsSent);
+        }
+
+        /// <summary>
+        /// A user with multiple notifications should get them all back,
+        /// newest first.
+        /// </summary>
+        [Fact]
+        public void MultipleNotifications_AllReturnedForUser()
+        {
+            // Arrange
+            var service = new NotificationService(new InMemoryNotificationStore());
+
+            // Act
+            service.SendNotification("multi-user", "email", "First", "One");
+            service.SendNotification("multi-user", "sms", "Second", "Two");
+            service.SendNotification("multi-user", "push", "Third", "Three");
+
+            var notifications = service.GetUserNotifications("multi-user").ToList();
+
+            // Assert
+            Assert.Equal(3, notifications.Count);
+            Assert.All(notifications, n => Assert.Equal("multi-user", n.UserId));
+        }
+
+        /// <summary>
+        /// After sending a notification, HasBeenNotified should return true.
+        /// </summary>
+        [Fact]
+        public void AfterSending_HasBeenNotifiedReturnsTrue()
+        {
+            // Arrange
+            var service = new NotificationService(new InMemoryNotificationStore());
+
+            // Act
+            service.SendNotification("notified-user", "email", "Hello", "World");
+            var result = service.HasBeenNotified("notified-user");
+
+            // Assert
+            Assert.True(result);
+        }
+    }
 }

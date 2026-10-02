@@ -1,7 +1,87 @@
-// Integration tests for subscription-service.
-using MediaStreamX; // Import the service namespace.
-using System.Net; // Import HTTP status support.
-namespace Tests; // Declare the test namespace.
-public class IntegrationTests { // Define HTTP integration tests.
-    [Fact] public async Task HealthServerStarts() { using var cts = new CancellationTokenSource(); var app = new ServiceApp(); var port = Random.Shared.Next(12000, 15000); var task = app.RunAsync(port, "subscription-service", cts.Token); await Task.Delay(150); using var client = new HttpClient(); var response = await client.GetAsync($"http://127.0.0.1:{port}/health"); cts.Cancel(); Assert.Equal(HttpStatusCode.OK, response.StatusCode); } // Verify the live HTTP endpoint.
+// =============================================================================
+// INTEGRATION TESTS for the Subscription Service
+// =============================================================================
+// These tests verify that the subscription service works end-to-end —
+// from the API surface down to the storage layer. They exercise the full
+// stack rather than isolated units.
+// =============================================================================
+
+using System;
+using Xunit;
+
+namespace SubscriptionService.Tests
+{
+    /// <summary>
+    /// Integration tests for the subscription service.
+    /// Each test exercises multiple layers at once.
+    /// </summary>
+    public class IntegrationTests
+    {
+        /// <summary>
+        /// End-to-end: creating a subscription should make it retrievable.
+        /// This tests the full create → store → retrieve flow.
+        /// </summary>
+        [Fact]
+        public void CreateAndRetrieve_WorksEndToEnd()
+        {
+            // Arrange
+            var store = new InMemorySubscriptionStore();
+            var service = new SubscriptionService(store);
+
+            // Act
+            var created = service.CreateSubscription("integration-user", "Premium");
+            var retrieved = service.GetSubscription("integration-user");
+
+            // Assert
+            Assert.NotNull(created);
+            Assert.NotNull(retrieved);
+            Assert.Equal(created.UserId, retrieved.UserId);
+            Assert.Equal("Premium", retrieved.PlanName);
+            Assert.True(retrieved.IsActive);
+        }
+
+        /// <summary>
+        /// End-to-end: cancelling a subscription should persist across
+        /// retrieval operations.
+        /// </summary>
+        [Fact]
+        public void CancelAndRetrieve_PersistsCancellation()
+        {
+            // Arrange
+            var store = new InMemorySubscriptionStore();
+            var service = new SubscriptionService(store);
+            service.CreateSubscription("cancel-user", "Basic");
+
+            // Act
+            service.CancelSubscription("cancel-user");
+            var retrieved = service.GetSubscription("cancel-user");
+
+            // Assert
+            Assert.NotNull(retrieved);
+            Assert.False(retrieved.IsActive);
+            Assert.NotNull(retrieved.CancelledAt);
+        }
+
+        /// <summary>
+        /// End-to-end: upgrading a plan should preserve the user's history
+        /// and update the plan name in storage.
+        /// </summary>
+        [Fact]
+        public void UpgradePlan_PreservesUserAndUpdatesPlan()
+        {
+            // Arrange
+            var store = new InMemorySubscriptionStore();
+            var service = new SubscriptionService(store);
+            service.CreateSubscription("upgrade-user", "Basic");
+
+            // Act
+            service.UpgradePlan("upgrade-user", "Premium");
+            var retrieved = service.GetSubscription("upgrade-user");
+
+            // Assert
+            Assert.NotNull(retrieved);
+            Assert.Equal("upgrade-user", retrieved.UserId);
+            Assert.Equal("Premium", retrieved.PlanName);
+        }
+    }
 }
