@@ -39,9 +39,11 @@ class Handler(BaseHTTPRequestHandler):  # Define the HTTP request handler.
 
     def log_message(self, format, *args):  # Silence default HTTP logs during tests.
         return  # Do nothing for each access log.
-
-def create_server(port=0):  # Create an authentication HTTP server.
+    
+# Create an authentication HTTP server.
+def create_server(port=0):  
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)  # Bind to localhost and return the server.
 
-if __name__ == "__main__":  # Start the service when executed directly.
+# Start the service when executed directly.
+if __name__ == "__main__":  
     create_server(auth_config.PORT).serve_forever()  # Serve requests forever on the configured port.
