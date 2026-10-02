@@ -40,6 +40,7 @@ public class ServiceApp
         context.Response.Close(); // Close the response stream.
     }
 }
+
 // Define the program entry point for the subscription service.
 public static class Program
 {
