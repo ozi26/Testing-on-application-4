@@ -48,6 +48,7 @@ TEST_RUNNERS = {
     
     # C / C++ -> ctest (common)
     "c":   {"command": ["ctest"], "args": ["--output-on-failure"], "name": "ctest"},
+    "cs":  {"command": ["dotnet", "test"], "args": [], "name": "dotnet test"},
     "cpp": {"command": ["ctest"], "args": ["--output-on-failure"], "name": "ctest"},
 }
 
