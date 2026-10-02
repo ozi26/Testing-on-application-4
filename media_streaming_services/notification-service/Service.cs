@@ -6,7 +6,7 @@ using System.Text.Json;
 
 namespace MediaStreamX;
 
-// Define the service class that implements the notification service.
+// Define the service class that implements the notification service....
 public class ServiceApp
 {
     private readonly Dictionary<string, string> _data = new(); // Store prototype state in memory.
@@ -42,7 +42,7 @@ public class ServiceApp
     }
 }
 
-// Define the program entry point for the notification service.
+// Define the program entry point for the notification service....
 public static class Program
 {
     public static async Task Main() // Start the service process.

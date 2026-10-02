@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace MediaStreamX;
 
-// Define the service class that implements the subscription service.
+// Define the service class that implements the subscription service....
 public class ServiceApp
 {
     private readonly Dictionary<string, string> _data = new(); // Store prototype state in memory.
@@ -41,7 +41,7 @@ public class ServiceApp
     }
 }
 
-// Define the program entry point for the subscription service.
+// Define the program entry point for the subscription service....
 public static class Program
 {
     public static async Task Main() // Start the service process.
