@@ -33,6 +33,8 @@ function createServer() { // Create and return the configured HTTP server.
   return http.createServer(handleRequest); // Build a server around the request handler.
 } // End createServer.
 
+// Start the network server only when executed directly.
+
 if (require.main === module) { // Start the network server only when executed directly.
   createServer().listen(config.port, () => console.log(`${config.serviceName} listening on ${config.port}`)); // Listen on the configured port.
 } // End direct execution block.
