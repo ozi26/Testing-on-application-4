@@ -3,8 +3,7 @@
 # RUN SELECTED TESTS — Multi-language, monorepo-aware
 # =============================================================================
 # Reads analyzer_result.json and runs only the affected tests.
-# Each test is run from the directory of the service it belongs to,
-# not from the workspace root.
+# Each test is run from the directory of the service it belongs to.
 # =============================================================================
 
 import json
@@ -13,23 +12,19 @@ import subprocess
 from pathlib import Path
 
 
-# -----------------------------------------------------------------------------
-# Find the project root for a test file by walking up the directory tree
-# until we find a project marker (package.json, pom.xml, .csproj, etc.)
-# -----------------------------------------------------------------------------
 PROJECT_MARKERS = {
-    ".js":  ["package.json"],
-    ".ts":  ["package.json", "tsconfig.json"],
-    ".py":  ["pyproject.toml", "setup.py", "pytest.ini", "requirements.txt"],
+    ".js":   ["package.json"],
+    ".ts":   ["package.json", "tsconfig.json"],
+    ".py":   ["pyproject.toml", "setup.py", "pytest.ini", "requirements.txt"],
     ".java": ["pom.xml", "build.gradle", "build.gradle.kts"],
-    ".cs":  ["*.csproj", "*.sln"],
+    ".cs":   ["*.csproj", "*.sln"],
 }
 
 
 def find_project_root(test_file):
     """
     Walk up from the test file's directory to find the nearest project marker.
-    Returns the directory containing the marker, or the test file's dir.
+    Returns the absolute path to the directory containing the marker.
     """
     test_path = Path(test_file).resolve()
     ext = test_path.suffix.lower()
@@ -38,7 +33,7 @@ def find_project_root(test_file):
         return test_path.parent
 
     current = test_path.parent
-    for _ in range(6):  # walk up at most 6 levels
+    for _ in range(6):
         for marker in markers:
             if "*" in marker:
                 if any(current.glob(marker)):
@@ -53,24 +48,36 @@ def find_project_root(test_file):
     return test_path.parent
 
 
+def relpath(test_file, root):
+    """
+    Compute the path of test_file relative to root, using absolute
+    paths on both sides to avoid coordinate-system mismatches.
+    """
+    return str(Path(test_file).resolve().relative_to(Path(root).resolve()))
+
+
 # -----------------------------------------------------------------------------
-# Test runner dispatch per extension
+# Language-specific runners
 # -----------------------------------------------------------------------------
+
 def run_js_tests(test_files):
     """Run JavaScript tests grouped by their service directory."""
     exit_code = 0
     groups = {}
     for test_file in test_files:
         root = find_project_root(test_file)
-        groups.setdefault(root, []).append(str(Path(test_file).relative_to(root)))
+        groups.setdefault(root, []).append(relpath(test_file, root))
 
     for root, files in groups.items():
         print(f"\n  Running JS tests in: {root}")
         print(f"    Files: {files}")
-        # Jest accepts relative paths from the project root
         cmd = ["npm", "test", "--"] + files
-        result = subprocess.run(cmd, cwd=root)
-        exit_code = max(exit_code, result.returncode)
+        try:
+            result = subprocess.run(cmd, cwd=root)
+            exit_code = max(exit_code, result.returncode)
+        except FileNotFoundError:
+            print(f"    [ERROR] npm not found")
+            exit_code = 127
     return exit_code
 
 
@@ -80,14 +87,18 @@ def run_py_tests(test_files):
     groups = {}
     for test_file in test_files:
         root = find_project_root(test_file)
-        groups.setdefault(root, []).append(str(Path(test_file).relative_to(root)))
+        groups.setdefault(root, []).append(relpath(test_file, root))
 
     for root, files in groups.items():
         print(f"\n  Running Python tests in: {root}")
         print(f"    Files: {files}")
         cmd = [sys.executable, "-m", "pytest"] + files + ["-v"]
-        result = subprocess.run(cmd, cwd=root)
-        exit_code = max(exit_code, result.returncode)
+        try:
+            result = subprocess.run(cmd, cwd=root)
+            exit_code = max(exit_code, result.returncode)
+        except FileNotFoundError:
+            print(f"    [ERROR] pytest not found")
+            exit_code = 127
     return exit_code
 
 
@@ -101,22 +112,23 @@ def run_cs_tests(test_files):
 
     for root, files in groups.items():
         print(f"\n  Running C# tests in: {root}")
-        # dotnet test runs the entire project's test suite.
-        # We can't select individual .cs files, so we pass the filter
-        # for the test project that contains them.
         csproj = list(root.glob("*.csproj"))
         if csproj:
             print(f"    Project: {csproj[0].name}")
             cmd = ["dotnet", "test", str(csproj[0])]
-            result = subprocess.run(cmd, cwd=root)
-            exit_code = max(exit_code, result.returncode)
+            try:
+                result = subprocess.run(cmd, cwd=root)
+                exit_code = max(exit_code, result.returncode)
+            except FileNotFoundError:
+                print(f"    [ERROR] dotnet not found")
+                exit_code = 127
         else:
             print(f"    [SKIP] No .csproj found in {root}")
     return exit_code
 
 
 def run_java_tests(test_files):
-    """Run Java tests with maven."""
+    """Run Java tests with maven or gradle."""
     exit_code = 0
     groups = {}
     for test_file in test_files:
@@ -127,20 +139,24 @@ def run_java_tests(test_files):
         print(f"\n  Running Java tests in: {root}")
         if (root / "pom.xml").exists():
             cmd = ["mvn", "test"]
-            result = subprocess.run(cmd, cwd=root)
-            exit_code = max(exit_code, result.returncode)
         elif (root / "build.gradle").exists():
             cmd = ["gradle", "test"]
-            result = subprocess.run(cmd, cwd=root)
-            exit_code = max(exit_code, result.returncode)
         else:
             print(f"    [SKIP] No build file found in {root}")
+            continue
+        try:
+            result = subprocess.run(cmd, cwd=root)
+            exit_code = max(exit_code, result.returncode)
+        except FileNotFoundError:
+            print(f"    [ERROR] build tool not found")
+            exit_code = 127
     return exit_code
 
 
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
+
 def main():
     result_file = Path("analyzer_result.json")
     if not result_file.exists():
