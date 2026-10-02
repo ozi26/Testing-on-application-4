@@ -319,13 +319,24 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
     # -------------------------------------------------------------------------
     affected_services = set()
 
-    # From source code file paths
+    # --- From source code file paths ---
     for f in source_files:
         service = extract_service_name(f)
         if service:
             affected_services.add(service)
 
-    # From config file contents via git diff
+    # --- From config file paths (THIS WAS MISSING) ---
+    # Extracts the service name directly from the filename.
+    # Example: config/history.properties -> "history"
+    #          config/streaming.config.js -> "streaming"
+    for f in config_files:
+        service = extract_service_name(f)
+        if service:
+            affected_services.add(service)
+
+    # --- From config file contents via git diff (supplementary) ---
+    # For Kubernetes manifests and other YAML configs where the service
+    # name lives inside the file rather than in the filename.
     for f in config_files:
         git_path = f.replace("\\", "/")
 
@@ -359,7 +370,7 @@ def analyze_changes(repo_path=".", commit_range="HEAD~1..HEAD", test_dir="tests"
             file_services = extract_services_from_config(f)
             affected_services.update(file_services)
 
-    # Fallback: if still empty, use the changed file's own name
+    # --- Final fallback: use changed file paths if nothing was found ---
     if not affected_services:
         for f in source_files + config_files:
             service = extract_service_name(f)
