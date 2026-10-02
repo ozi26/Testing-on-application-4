@@ -9,101 +9,52 @@ from analyzer.file_utils import extract_words, read_text_file
 
 def calculate_score(changed_terms, test_file_path, idf_lookup=None):
     """
-    Calculate a TF-IDF-weighted relevance score between changed terms
-    and a test file.
-
-    This function computes how relevant a test file is to a set of changed
-    source/config terms. It uses inverse document frequency (IDF) weights
-    when provided, which down-weights terms that appear in many files
-    (generic keywords) and up-weights terms that appear in few files
-    (distinctive domain terms).
-
-    Args:
-        changed_terms: A set of lowercase words extracted from the changed files
-        test_file_path: Path to the test file to score
-        idf_lookup: Optional dict mapping each term to its IDF weight.
-                    If provided, scoring uses weighted sums.
-                    If None, scoring falls back to simple ratio.
-
-    Returns:
-        A float between 0.0 and 1.0 representing the relevance score.
-        Higher scores mean the test is more likely to be affected.
-
-    Examples:
-        changed = {"streaming", "playback", "manifest", "media"}
-        score = calculate_score(changed, "tests/test_streaming.py", idf_lookup)
-        # Returns a high score if the test file contains those terms
+    Score = fraction of the CHANGED file's distinctive terms that
+    appear in the test file.
+    
+    Uses IDF to define "distinctive": only terms with IDF above a
+    threshold count toward the numerator.
     """
-    # Import here to avoid a circular import with analyzer.file_utils
     from analyzer.file_utils import extract_words, read_text_file
-
-    # -------------------------------------------------------------------------
-    # 1. Read and tokenize the test file
-    # -------------------------------------------------------------------------
+    
     test_content = read_text_file(test_file_path)
-
-    # If the test file can't be read, it can't be affected
     if not test_content:
         return 0.0
-
     test_terms = extract_words(test_content)
-
-    # If the test file has no extractable terms, skip it
     if not test_terms:
         return 0.0
-
-    # -------------------------------------------------------------------------
-    # 2. Find common terms between the changed set and the test file
-    # -------------------------------------------------------------------------
-    common_terms = changed_terms.intersection(test_terms)
-
-    # No overlap at all → zero relevance
-    if not common_terms:
-        return 0.0
-
-    # -------------------------------------------------------------------------
-    # 3. If no IDF table is provided, fall back to simple ratio
-    #    This is less accurate but always works.
-    # -------------------------------------------------------------------------
+    
+    # If no IDF provided, use all changed terms
     if not idf_lookup:
-        # Simple ratio: what fraction of changed terms appear in the test?
-        return len(common_terms) / len(changed_terms)
-
-    # -------------------------------------------------------------------------
-    # 4. IDF-weighted scoring (the preferred path)
-    #    Numerator: sum of IDF weights for terms present in BOTH sets
-    #    Denominator: sum of IDF weights for ALL changed terms
-    # -------------------------------------------------------------------------
-    weighted_common = 0.0
-    for term in common_terms:
-        # Default weight of 1.0 if term is somehow missing from the lookup
-        weighted_common += idf_lookup.get(term, 1.0)
-
-    weighted_changed = 0.0
-    for term in changed_terms:
-        weighted_changed += idf_lookup.get(term, 1.0)
-
-    # Guard against division by zero (only possible if the IDF table is empty)
-    if weighted_changed == 0:
-        return 0.0
-
-    # -------------------------------------------------------------------------
-    # 5. Return the normalized weighted score (0.0 to 1.0)
-    # -------------------------------------------------------------------------
-    return weighted_common / weighted_changed
+        common = changed_terms.intersection(test_terms)
+        return len(common) / len(changed_terms) if changed_terms else 0.0
+    
+    # Filter changed_terms to only distinctive ones (IDF > 1.5)
+    DISTINCTIVE_THRESHOLD = 1.5
+    distinctive_terms = {
+        t for t in changed_terms
+        if idf_lookup.get(t, 0.0) > DISTINCTIVE_THRESHOLD
+    }
+    
+    if not distinctive_terms:
+        # No distinctive terms — use all
+        distinctive_terms = changed_terms
+    
+    # Numerator: how many of the distinctive terms are in the test?
+    matched = distinctive_terms.intersection(test_terms)
+    
+    # Score = fraction of distinctive terms matched
+    return len(matched) / len(distinctive_terms)
 
 def compute_service_relevance(test_file, affected_services):
     """
     Compute a service-relevance score between 0.0 and 1.0.
 
-    Priority:
-      1.0 — full service name in filename
-      0.9 — "<service>-service" or "<service>_service" in full path
-      0.7 — root word (>= 5 chars) in filename
-      0.5 — service name in a directory segment of the path
-      0.3 — full service name in file content (weak signal)
-      0.0 — no match
+    Uses WORD BOUNDARIES and PATH SEGMENT EQUALITY, not substring
+    matching, to avoid false positives like matching "streaming_service"
+    inside the parent folder "media_streaming_services".
     """
+    import re
     from pathlib import Path
     from analyzer.file_utils import read_text_file
 
@@ -123,32 +74,41 @@ def compute_service_relevance(test_file, affected_services):
         service_lower = service.lower()
         root = service_lower.replace("service", "").strip("-_")
 
-        # --- Filename full match (strongest) ---
-        if service_lower in filename:
+        # --- 1. Filename full match (word-boundary aware) ---
+        if re.search(rf"(?:^|[_\-.]){re.escape(service_lower)}(?:$|[_\-.])", filename):
             best_score = max(best_score, 1.0)
             continue
 
-        # --- Path: "<service>-service" or "<service>_service" ---
-        if f"{service_lower}-service" in full_path:
-            best_score = max(best_score, 0.9)
-            continue
-        if f"{service_lower}_service" in full_path:
-            best_score = max(best_score, 0.9)
-            continue
-
-        # --- Filename root-word match (require >= 5 chars to avoid noise) ---
-        if len(root) >= 5 and root in filename:
-            best_score = max(best_score, 0.7)
-            continue
-
-        # --- Directory segment exact match ---
-        if service_lower in path_parts:
-            best_score = max(best_score, 0.5)
+        # --- 2. Path SEGMENT match (not substring) ---
+        matched_path = False
+        for part in path_parts:
+            if part in (f"{service_lower}-service", f"{service_lower}_service"):
+                best_score = max(best_score, 0.95)
+                matched_path = True
+                break
+            if part == service_lower:
+                best_score = max(best_score, 0.9)
+                matched_path = True
+                break
+        if matched_path:
             continue
 
-        # --- Content match (weak signal, only full service name) ---
-        # Do NOT match root words in content — too noisy.
-        if service_lower in content:
+        # --- 3. Filename root-word match (word boundary, min length 5) ---
+        if len(root) >= 5:
+            if re.search(rf"(?:^|[_\-.]){re.escape(root)}(?:$|[_\-.])", filename):
+                best_score = max(best_score, 0.7)
+                continue
+
+        # --- 4. Content match — require an actual reference ---
+        # Only match imports, from clauses, or URL paths.
+        # Do NOT match casual mentions of the service name.
+        if re.search(rf"\bimport\s+{re.escape(service_lower)}\b", content):
+            best_score = max(best_score, 0.4)
+            continue
+        if re.search(rf"\bfrom\s+{re.escape(service_lower)}\b", content):
+            best_score = max(best_score, 0.4)
+            continue
+        if re.search(rf"/{re.escape(service_lower)}(?:-service)?/", content):
             best_score = max(best_score, 0.3)
             continue
 
