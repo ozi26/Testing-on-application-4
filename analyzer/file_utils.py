@@ -8,8 +8,7 @@
 from ast import pattern
 import re                           # 're' is Python's regular expression library
 from pathlib import Path
-
-from matplotlib import text            # 'Path' helps us work with file paths easily
+from pathlib import Path               # 'Path' helps us work with file paths easily
 
 
 def read_text_file(file_path):
