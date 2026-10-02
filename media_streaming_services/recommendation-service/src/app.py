@@ -21,7 +21,8 @@ class Handler(BaseHTTPRequestHandler):  # Define the HTTP handler.
         self._json(404, {"error":"Route not found"})  # Reject unknown routes.
     def log_message(self, format, *args): return  # Disable access logs.
 
-def create_server(port=0):  # Create the HTTP server.
+# Create the HTTP server.
+def create_server(port=0):  
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)  # Return the configured server.
 
 if __name__ == "__main__": create_server(recommendation_config.PORT).serve_forever()  # Start the service.
