@@ -27,6 +27,8 @@ function handleRequest(req, res) { // Handle one incoming HTTP request.
   return sendJson(res, 404, { error: 'Route not found' }); // Reject unknown routes.
 } // End handleRequest.
 
+// this is just a simple comment to test the analyzer
+
 function createServer() { // Create and return the configured HTTP server.
   return http.createServer(handleRequest); // Build a server around the request handler.
 } // End createServer.

@@ -7,6 +7,8 @@ import java.net.InetSocketAddress; // Import network address support.
 import java.nio.charset.StandardCharsets; // Import UTF-8 support.
 import java.util.*; // Import collection helpers.
 
+// Implementation of the history service for managing user viewing history.
+
 public class HistoryService { // Define the HistoryService service class.
     private static final Map<String, List<String>> DATA = new HashMap<>(); // Keep prototype data in memory.
     public static HistoryService create() { return new HistoryService(); } // Create the service object for tests.
