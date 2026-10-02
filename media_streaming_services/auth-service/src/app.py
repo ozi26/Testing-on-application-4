@@ -5,7 +5,8 @@ import json  # Import JSON support.
 import sys  # Import Python path support.
 
 # Add the central config directory to the module path.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))  
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))
+  
 # Import the language-specific configuration.
 import auth_config  
 
