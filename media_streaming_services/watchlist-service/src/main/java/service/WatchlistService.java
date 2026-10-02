@@ -7,6 +7,8 @@ import java.net.InetSocketAddress; // Import network address support.
 import java.nio.charset.StandardCharsets; // Import UTF-8 support.
 import java.util.*; // Import collection helpers.
 
+// this is just a random comment to test the git diff tool
+
 public class WatchlistService { // Define the WatchlistService service class.
     private static final Map<String, List<String>> DATA = new HashMap<>(); // Keep prototype data in memory.
     public static WatchlistService create() { return new WatchlistService(); } // Create the service object for tests.
