@@ -1,4 +1,4 @@
 # Central configuration for the Python authentication service.
 
-PORT = 8103  # Define the default HTTP port.
+PORT = 8120  # Define the default HTTP port.{8103}
 SERVICE_NAME = "auth-service"  # Define the service name.
