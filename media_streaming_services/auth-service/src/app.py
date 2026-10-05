@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "config"))
 # Import the language-specific configuration.
 import auth_config  
 
+# This is just a harmless comment to test the analyzer...
+
 USERS = {"demo@example.com": {"password": "demo123", "userId": "u1"}}  # Define the demonstration users.
 
 def login(email, password):  # Validate login credentials.

@@ -6,6 +6,8 @@ using System.Text.Json;
 
 namespace MediaStreamX;
 
+// This is just a harmless comment to test the analyzer...
+
 // Define the service class that implements the notification service....
 public class ServiceApp
 {
